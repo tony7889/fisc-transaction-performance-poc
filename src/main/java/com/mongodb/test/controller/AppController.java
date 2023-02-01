@@ -1,6 +1,9 @@
 package com.mongodb.test.controller;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 
 import org.bson.Document;
 import org.slf4j.Logger;
@@ -9,7 +12,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 import com.mongodb.MongoException;
 import com.mongodb.ReadConcern;
@@ -23,9 +27,8 @@ import com.mongodb.client.MongoDatabase;
 import com.mongodb.client.TransactionBody;
 import com.mongodb.client.model.Accumulators;
 import com.mongodb.client.model.Aggregates;
-import com.mongodb.client.model.Filters;
-import com.mongodb.client.model.Updates;
 import com.mongodb.test.model.Account;
+import com.mongodb.test.service.AccountService;
 
 @RestController
 public class AppController {
@@ -33,6 +36,8 @@ public class AppController {
     private MongoClient client;
     @Autowired
     private MongoDatabase database;
+    @Autowired
+    private AccountService service;
 
     @Value("${settings.dbName}")
     private String dbName;
@@ -41,23 +46,40 @@ public class AppController {
 
     @Value("${settings.noOfAccount}")
     private int noOfAccount;
-    @Value("${settings.initialBalance}")
-    private int initialBalance;
+
     @Value("${settings.noOfTransfer}")
     private int noOfTransfer;
-    @Value("${settings.transferAmount}")
-    private int transferAmount;
+
+    @Value("${settings.noOfThread}")
+    private int noOfThread;
+    @Value("${settings.initialBalance}")
+    private int initialBalance;
 
     private static final Logger logger = LoggerFactory.getLogger(AppController.class);
 
     @GetMapping("/init")
-    public ResponseEntity<String> startInsertOdd() {
+    public ResponseEntity<String> startInit() throws InterruptedException {
         MongoCollection<Account> collection = database.getCollection(collectionName, Account.class);
         collection.drop();
+        var accounts = new ArrayList<Account>();
         for (int i = 0; i < this.noOfAccount; i++) {
-            Account a = new Account(i + 1, initialBalance);
-            collection.insertOne(a);
+            accounts.add(new Account(i + 1, initialBalance));
+            // collection.insertOne(a);
         }
+        var ends = new ArrayList<CompletableFuture<Void>>();
+        int pageSize = this.noOfAccount / this.noOfThread;
+        int accPages = accounts.size() / pageSize;
+        for (int pageIdx = 0; pageIdx <= accPages; pageIdx++) {
+            int fromIdx = pageIdx * pageSize;
+            int toIdx = Math.min(accounts.size(), (pageIdx + 1) * pageSize);
+            var subList = accounts.subList(fromIdx, toIdx);
+            ends.add(this.service.asyncInsertAccount(collection, subList));
+
+            if (toIdx == accounts.size()) {
+                break;
+            }
+        }
+        CompletableFuture.allOf(ends.toArray(new CompletableFuture[ends.size()])).join();
         return new ResponseEntity<>("Init success", HttpStatus.OK);
     }
 
@@ -66,7 +88,7 @@ public class AppController {
         new Thread(new Runnable() {
             @Override
             public void run() {
-                runTransfer();
+                runBatchTransfer();
             }
 
         }).start();
@@ -80,26 +102,18 @@ public class AppController {
             @Override
             public void run() {
                 final ClientSession clientSession = client.startSession();
-                /* Step 2: Optional. Define options to use for the transaction. */
                 TransactionOptions txnOptions = TransactionOptions.builder()
                         .readPreference(ReadPreference.primary())
                         .readConcern(ReadConcern.LOCAL)
                         .writeConcern(WriteConcern.MAJORITY)
                         .build();
-                /*
-                 * Step 3: Define the sequence of operations to perform inside the transactions.
-                 */
-                TransactionBody txnBody = new TransactionBody<String>() {
+                TransactionBody<String> txnBody = new TransactionBody<String>() {
                     public String execute() {
-                        runTransfer(clientSession);
+                        runBatchTransfer(clientSession);
                         return "";
                     }
                 };
                 try {
-                    /*
-                     * Step 4: Use .withTransaction() to start a transaction,
-                     * execute the callback, and commit (or abort on error).
-                     */
                     clientSession.withTransaction(txnBody, txnOptions);
                 } catch (RuntimeException e) {
                     logger.error("Error during transfer", e);
@@ -127,10 +141,10 @@ public class AppController {
                     try (ClientSession clientSession = client.startSession()) {
                         clientSession.startTransaction(txnOptions);
                         logger.info("Start Transaction");
-                        runTransfer(clientSession);
+                        runBatchTransfer(clientSession);
                         logger.info("Start waiting for commit");
-                        //Thread.sleep(10000l);
-                        Thread.sleep(70000l);
+                        // Thread.sleep(10000l);
+                        Thread.sleep(80000l);
                         clientSession.commitTransaction();
                         logger.info("Transaction committed");
                     }
@@ -157,7 +171,7 @@ public class AppController {
                         try (ClientSession clientSession = client.startSession()) {
                             clientSession.startTransaction(txnOptions);
                             logger.info("Start Transaction");
-                            runTransfer(clientSession);
+                            runBatchTransfer(clientSession);
                             while (true) {
                                 try {
                                     clientSession.commitTransaction();
@@ -195,40 +209,34 @@ public class AppController {
         return new ResponseEntity<>("Transfer running in background", HttpStatus.OK);
     }
 
-    private void runTransfer() {
-        runTransfer(null);
+    public void runBatchTransfer() {
+        this.runBatchTransfer(null);
     }
 
-    private void runTransfer(ClientSession clientSession) {
-        MongoCollection<Account> collection = database.getCollection(collectionName, Account.class);
+    public void runBatchTransfer(ClientSession clientSession) {
+        var ends = new ArrayList<CompletableFuture<Void>>();
         for (int i = 0; i < noOfTransfer; i++) {
-            int randomId = (int) Math.floor(Math.random() * noOfAccount) + 1;
-            logger.info("Deduct $" + transferAmount + " from account " + randomId);
-            if (clientSession != null)
-                collection.updateOne(clientSession, Filters.eq("_id", randomId),
-                        Updates.inc("balance", -transferAmount));
-            else
-                collection.updateOne(Filters.eq("_id", randomId), Updates.inc("balance", -transferAmount));
-            int[] to = new int[transferAmount];
-
-            logger.info("Start transfering $1x50 to other account");
-            for (int j = 0; j < transferAmount; j++) {
-                int randomId2 = (int) Math.floor(Math.random() * noOfAccount) + 1;
-                if (clientSession != null)
-                    collection.updateOne(clientSession, Filters.eq("_id", randomId2), Updates.inc("balance", 1));
-                else
-                    collection.updateOne(Filters.eq("_id", randomId2), Updates.inc("balance", 1));
-                to[j] = randomId2;
-            }
-            logger.info("Completed transfer $1x50 from " + randomId + " to " + Arrays.toString(to));
-            Document doc;
-            if (clientSession != null)
-                doc = database.getCollection(collectionName).aggregate(clientSession, Arrays.asList(
-                        Aggregates.group("true", Accumulators.sum("total", "$balance")))).first();
-            else
-                doc = database.getCollection(collectionName).aggregate(Arrays.asList(
-                        Aggregates.group("true", Accumulators.sum("total", "$balance")))).first();
-            logger.info(doc.toString());
+            ends.add(this.service.asyncRunTransfer(clientSession));
         }
+        try {
+            CompletableFuture.allOf(ends.toArray(new CompletableFuture[ends.size()])).join();
+        } catch (CompletionException ex) {
+            try {
+                throw ex.getCause();
+            } catch (MongoException possible) {
+                // logger.error("retry", possible);
+                throw possible;
+            } catch (Throwable impossible) {
+                throw new AssertionError(impossible);
+            }
+        }
+        Document doc;
+        if (clientSession != null)
+            doc = database.getCollection(collectionName).aggregate(clientSession, Arrays.asList(
+                    Aggregates.group("true", Accumulators.sum("total", "$balance")))).first();
+        else
+            doc = database.getCollection(collectionName).aggregate(Arrays.asList(
+                    Aggregates.group("true", Accumulators.sum("total", "$balance")))).first();
+        logger.info("End Batch, total amount in the world:" + doc.toString());
     }
 }
