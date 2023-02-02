@@ -24,6 +24,7 @@ import com.mongodb.test.model.Transfer;
 
 @Service
 public class AccountService {
+
     public static enum MODE {
         NO_TRANSACTION,
         CALLBACK,
@@ -99,8 +100,9 @@ public class AccountService {
         List<Transfer> transfers = generateTransfer();
 
         int pageSize = transfers.size() / this.noOfThread;
-        if(pageSize<=0)
+        if (pageSize <= 0) {
             pageSize = 1;
+        }
         int accPages = transfers.size() / pageSize;
         for (int pageIdx = 0; pageIdx <= accPages; pageIdx++) {
             int fromIdx = pageIdx * pageSize;
@@ -125,13 +127,10 @@ public class AccountService {
         }
 
         s.setOperation("transfer-update");
-        s.setBatchSize(noOfTransfer*(transferAmount+1));
+        s.setBatchSize(noOfTransfer * (transferAmount + 1));
         s.setStartAt(LocalDateTime.now());
         sw.start();
         CompletableFuture.allOf(ends.toArray(new CompletableFuture[ends.size()])).join();
-        /*ends.stream().map(CompletableFuture::join).forEach((sw) -> {
-            s.setDuration(sw.getTotalTimeMillis());
-        });*/
         sw.stop();
         s.setDuration(sw.getTotalTimeMillis());
         s.setEndAt(LocalDateTime.now());
@@ -140,17 +139,31 @@ public class AccountService {
         logger.info("End Batch, total amount in the world:" + doc.toString());
         return s;
     }
+
     public Stat longTransaction(long waitTime) throws InterruptedException {
-        return this.asyncService.longTransaction(waitTime, generateTransfer());
+
+        Stat s = new Stat();
+        s.setOperation("longTransaction-update");
+        s.setBatchSize(noOfTransfer * (transferAmount + 1));
+        s.setStartAt(LocalDateTime.now());
+        StopWatch sw = new StopWatch();
+        sw.start();
+        this.asyncService.longTransaction(waitTime, generateTransfer());
+        sw.stop();
+        s.setDuration(sw.getTotalTimeMillis());
+        s.setEndAt(LocalDateTime.now());
+        return s;
     }
-    private List<Transfer> generateTransfer(){
+
+    private List<Transfer> generateTransfer() {
         List<Transfer> transfers = new ArrayList<>();
         for (int i = 0; i < noOfTransfer; i++) {
             Transfer t = new Transfer();
             t.setFromAccountId((int) Math.floor(Math.random() * noOfAccount) + 1);
             for (int j = 0; j < transferAmount; j++) {
-                if(t.getToAccountId()==null)
+                if (t.getToAccountId() == null) {
                     t.setToAccountId(new ArrayList<>());
+                }
                 t.getToAccountId().add((int) Math.floor(Math.random() * noOfAccount) + 1);
             }
             transfers.add(t);

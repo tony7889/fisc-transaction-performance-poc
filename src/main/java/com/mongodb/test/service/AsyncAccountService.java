@@ -29,7 +29,6 @@ import com.mongodb.client.model.Filters;
 import com.mongodb.client.model.UpdateOneModel;
 import com.mongodb.client.model.Updates;
 import com.mongodb.test.model.Account;
-import com.mongodb.test.model.Stat;
 import com.mongodb.test.model.Transfer;
 
 @Service
@@ -64,7 +63,7 @@ public class AsyncAccountService {
         final ClientSession clientSession = client.startSession();
         TransactionOptions txnOptions = TransactionOptions.builder()
                 .readPreference(ReadPreference.primary())
-                .readConcern(ReadConcern.LOCAL)
+                .readConcern(ReadConcern.MAJORITY)
                 .writeConcern(WriteConcern.MAJORITY)
                 .build();
         TransactionBody<StopWatch> txnBody = new TransactionBody<StopWatch>() {
@@ -142,9 +141,9 @@ public class AsyncAccountService {
     }
 
     private StopWatch transfer(ClientSession clientSession, List<Transfer> transfers) {
-        StopWatch sw = new StopWatch();
-        sw.start();
         for(Transfer t: transfers){
+            StopWatch sw = new StopWatch();
+            sw.start();
             int transferAmount = t.getToAccountId().size();
             MongoCollection<Account> collection = database.getCollection(collectionName, Account.class);
             logger.info(Thread.currentThread().getName() + " Deduct $" + transferAmount + " from account " + t.getFromAccountId());
@@ -163,7 +162,7 @@ public class AsyncAccountService {
             logger.info((clientSession==null?"":("clientSession: "+clientSession.getServerSession().getIdentifier().getBinary("id").asUuid()+" "))+"Completed transfer $1x"+t.getToAccountId().size()+" from " + t.getFromAccountId() + " to " + Arrays.toString(t.getToAccountId().toArray()) + ". takes "
                     + sw.getTotalTimeMillis() + "ms, TPS:"+(t.getToAccountId().size()+1)/sw.getTotalTimeSeconds());
         }
-        return sw;
+        return null;
     }
 
     private StopWatch transferBatch(ClientSession clientSession, List<Transfer> transfers) {
@@ -190,22 +189,79 @@ public class AsyncAccountService {
         return sw;
     }
 
-    public Stat longTransaction(long waitTime, List<Transfer> transfers) throws InterruptedException {
-
-        TransactionOptions txnOptions = TransactionOptions.builder()
-                .readPreference(ReadPreference.primary())
-                .readConcern(ReadConcern.MAJORITY)
-                .writeConcern(WriteConcern.MAJORITY)
-                .build();
-        try (ClientSession clientSession = client.startSession()) {
-            clientSession.startTransaction(txnOptions);
-            logger.info("Start Transaction");
-            transfer(clientSession, transfers);
-            logger.info("Start waiting for commit");
-            Thread.sleep(waitTime);
-            clientSession.commitTransaction();
-            logger.info("Transaction committed");
+    public void longTransaction(long waitTime, List<Transfer> transfers) throws InterruptedException {
+        UUID tranId = null;
+        while (true) {
+            try {
+                TransactionOptions txnOptions = TransactionOptions.builder()
+                        .readPreference(ReadPreference.primary())
+                        .readConcern(ReadConcern.MAJORITY)
+                        // .readConcern(ReadConcern.SNAPSHOT)
+                        .writeConcern(WriteConcern.MAJORITY)
+                        .build();
+                try (ClientSession clientSession = client.startSession()) {
+                    clientSession.startTransaction(txnOptions);
+                    tranId = clientSession.getServerSession().getIdentifier().getBinary("id").asUuid();
+                    logger.info("Start Transaction: "+tranId);
+                    transfer(clientSession, transfers);
+                    logger.info("Start waiting for commit");
+                    Thread.sleep(waitTime);
+                    while (true) {
+                        try {
+                            clientSession.commitTransaction();
+                            logger.info("Transaction committed: "+tranId);
+                            break;
+                        } catch (MongoException e) {
+                            // can retry commit
+                            if (e.hasErrorLabel(MongoException.UNKNOWN_TRANSACTION_COMMIT_RESULT_LABEL)) {
+                                logger.info("UnknownTransactionCommitResult, retrying "+tranId+" commit operation ...");
+                                continue;
+                            } else {
+                                logger.error("Exception during commit ...", e);
+                                throw e;
+                            }
+                        }
+                    }
+                }
+                break;
+            } catch (MongoException e) {
+                //logger.info("Transaction aborted. Caught exception during transaction.");
+                if (e.hasErrorLabel(MongoException.TRANSIENT_TRANSACTION_ERROR_LABEL)) {
+                    // e.printStackTrace();
+                    logger.info("TransientTransactionError, aborting transaction "+tranId+" and retrying ...");
+                    continue;
+                } else {
+                    throw e;
+                }
+            }
         }
-        return new Stat();
+
+        // final ClientSession clientSession = client.startSession();
+        // UUID tranId = clientSession.getServerSession().getIdentifier().getBinary("id").asUuid();
+        // TransactionOptions txnOptions = TransactionOptions.builder()
+        //         .readPreference(ReadPreference.primary())
+        //         .readConcern(ReadConcern.MAJORITY)
+        //         .writeConcern(WriteConcern.MAJORITY)
+        //         .build();
+        // TransactionBody<String> txnBody = new TransactionBody<String>() {
+        //     public String execute() {
+        //         logger.info("Start Transaction: "+tranId);
+        //         transfer(clientSession, transfers);
+        //         logger.info("Start waiting for commit");
+        //         try {
+        //             Thread.sleep(waitTime);
+        //         } catch (InterruptedException e) {
+        //             e.printStackTrace();
+        //         }
+        //         return "Transaction committed: "+tranId;
+        //     }
+        // };
+        // try {
+        //     logger.info(clientSession.withTransaction(txnBody, txnOptions));
+        // } catch (RuntimeException e) {
+        //     logger.error("Error during transfer", e);
+        // } finally {
+        //     clientSession.close();
+        // }
     }
 }

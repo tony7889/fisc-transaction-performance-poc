@@ -4,7 +4,6 @@ package com.mongodb.test.controller;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -28,7 +27,7 @@ public class LongTransactionController {
 
     @GetMapping("/long/transaction/timeout")
     public ResponseEntity<Stat> longTransactionTimeout() throws InterruptedException {
-        return new ResponseEntity<>(this.service.longTransaction(80000l), HttpStatus.OK);
+        return new ResponseEntity<>(this.service.longTransaction(90000l), HttpStatus.OK);
     }
 
 
