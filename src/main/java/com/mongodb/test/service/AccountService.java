@@ -99,6 +99,8 @@ public class AccountService {
         List<Transfer> transfers = generateTransfer();
 
         int pageSize = transfers.size() / this.noOfThread;
+        if(pageSize<=0)
+            pageSize = 1;
         int accPages = transfers.size() / pageSize;
         for (int pageIdx = 0; pageIdx <= accPages; pageIdx++) {
             int fromIdx = pageIdx * pageSize;

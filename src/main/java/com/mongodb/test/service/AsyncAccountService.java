@@ -4,6 +4,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 import org.slf4j.Logger;
@@ -53,7 +54,7 @@ public class AsyncAccountService {
         collection.insertMany(accounts);
         sw.stop();
         logger.info(Thread.currentThread().getName() + " " + accounts.size() + " inserted. takes "
-                + sw.getTotalTimeMillis() + "ms");
+                + sw.getTotalTimeMillis() + "ms, TPS:"+accounts.size()/sw.getTotalTimeSeconds());
         return CompletableFuture.completedFuture(sw);
     }
 
@@ -84,6 +85,7 @@ public class AsyncAccountService {
     @Async
     public CompletableFuture<StopWatch> coreTransfer(List<Transfer> transfers, boolean isBatch) {
         StopWatch sw;
+        UUID tranId = null;
         while (true) {
             try {
                 TransactionOptions txnOptions = TransactionOptions.builder()
@@ -94,17 +96,18 @@ public class AsyncAccountService {
                         .build();
                 try (ClientSession clientSession = client.startSession()) {
                     clientSession.startTransaction(txnOptions);
-                    logger.info("Start Transaction");
+                    tranId = clientSession.getServerSession().getIdentifier().getBinary("id").asUuid();
+                    logger.info("Start Transaction: "+tranId);
                     sw = isBatch?this.transferBatch(clientSession, transfers):this.transfer(clientSession, transfers);
                     while (true) {
                         try {
                             clientSession.commitTransaction();
-                            logger.info("Transaction committed");
+                            logger.info("Transaction committed: "+tranId);
                             break;
                         } catch (MongoException e) {
                             // can retry commit
                             if (e.hasErrorLabel(MongoException.UNKNOWN_TRANSACTION_COMMIT_RESULT_LABEL)) {
-                                logger.info("UnknownTransactionCommitResult, retrying commit operation ...");
+                                logger.info("UnknownTransactionCommitResult, retrying "+tranId+" commit operation ...");
                                 continue;
                             } else {
                                 logger.info("Exception during commit ...");
@@ -115,12 +118,12 @@ public class AsyncAccountService {
                 }
                 break;
             } catch (MongoException e) {
-                logger.info("Transaction aborted. Caught exception during transaction.");
+                //logger.info("Transaction aborted. Caught exception during transaction.");
                 if (e.hasErrorLabel(MongoException.TRANSIENT_TRANSACTION_ERROR_LABEL)) {
                     // e.printStackTrace();
-                    logger.info("TransientTransactionError, aborting transaction and retrying ...");
+                    logger.info("TransientTransactionError, aborting transaction "+tranId+" and retrying ...");
                     try {
-                        Thread.sleep(100);
+                        Thread.sleep(1000);
                     } catch (InterruptedException e1) {
                         e1.printStackTrace();
                     }
@@ -150,8 +153,6 @@ public class AsyncAccountService {
                         Updates.inc("balance", -transferAmount));
             else
                 collection.updateOne(Filters.eq("_id", t.getFromAccountId()), Updates.inc("balance", -transferAmount));
-    
-            logger.info(Thread.currentThread().getName() + " Start transfering $1x50 to other account");
             for (Integer id2 : t.getToAccountId()) {
                 if (clientSession != null)
                     collection.updateOne(clientSession, Filters.eq("_id", id2), Updates.inc("balance", 1));
@@ -159,8 +160,8 @@ public class AsyncAccountService {
                     collection.updateOne(Filters.eq("_id", id2), Updates.inc("balance", 1));
             }
             sw.stop();
-            logger.info("Completed transfer $1x50 from " + t.getFromAccountId() + " to " + Arrays.toString(t.getToAccountId().toArray()) + ". takes "
-                    + sw.getTotalTimeMillis() + "ms");
+            logger.info((clientSession==null?"":("clientSession: "+clientSession.getServerSession().getIdentifier().getBinary("id").asUuid()+" "))+"Completed transfer $1x"+t.getToAccountId().size()+" from " + t.getFromAccountId() + " to " + Arrays.toString(t.getToAccountId().toArray()) + ". takes "
+                    + sw.getTotalTimeMillis() + "ms, TPS:"+(t.getToAccountId().size()+1)/sw.getTotalTimeSeconds());
         }
         return sw;
     }
@@ -173,9 +174,7 @@ public class AsyncAccountService {
         List<UpdateOneModel<Account>> list = new ArrayList<>();
         for(Transfer t: transfers){
             int transferAmount = t.getToAccountId().size();
-            logger.info(Thread.currentThread().getName() + " Deduct $" + transferAmount + " from account " + t.getFromAccountId());
             list.add(new UpdateOneModel<>(Filters.eq("_id", t.getFromAccountId()), Updates.inc("balance", -transferAmount)));
-            logger.info(Thread.currentThread().getName() + " Start transfering $1x50 to other account");
             for (Integer id2 : t.getToAccountId()) {
                 list.add(new UpdateOneModel<>(Filters.eq("_id", id2), Updates.inc("balance", 1)));
             }
@@ -186,8 +185,8 @@ public class AsyncAccountService {
         else
             collection.bulkWrite(list);
         sw.stop();
-        logger.info("Completed "+transfers.size()+" transfers. takes "
-                + sw.getTotalTimeMillis() + "ms");
+        logger.info((clientSession==null?"":("clientSession: "+clientSession.getServerSession().getIdentifier().getBinary("id").asUuid()+" "))+"Completed "+transfers.size()+" transfers, total "+ list.size() +" operations takes "
+                + sw.getTotalTimeMillis() + "ms, TPS:"+list.size()/sw.getTotalTimeSeconds());
         return sw;
     }
 

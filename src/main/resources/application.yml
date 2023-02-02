@@ -6,12 +6,12 @@ spring:
 settings:
   dbName: test-transaction
   collectionName: account
-  noOfThread: 30
-  noOfAccount: 100000
+  noOfThread: 20
+  noOfAccount: 200000
   initialBalance: 100
-  noOfTransfer: 100000
-  transferAmount: 10
+  noOfTransfer: 10
+  transferAmount: 50
 
-  corePoolsize: 20
-  maxPoolSize: 50
+  corePoolsize: 10
+  maxPoolSize: 30
   queueSize: 10
