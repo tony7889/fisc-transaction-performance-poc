@@ -6,7 +6,6 @@ settings:
   dbName: test-transaction
   collectionName: account
   noOfAccount: 100
-  noOfThread: 10
   initialBalance: 100
   noOfTransfer: 10
   transferAmount: 50

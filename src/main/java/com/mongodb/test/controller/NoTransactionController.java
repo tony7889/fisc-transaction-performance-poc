@@ -1,27 +1,27 @@
 package com.mongodb.test.controller;
 
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.mongodb.test.model.Stat;
 import com.mongodb.test.service.AccountService;
+import com.mongodb.test.service.AccountService.MODE;
 
 @RestController
-public class AppController {
-    private static final Logger logger = LoggerFactory.getLogger(AppController.class);
-
+public class NoTransactionController {
+    
     @Autowired
     private AccountService service;
 
-    @GetMapping("/init")
-    public ResponseEntity<Stat> startInit() throws InterruptedException {
-        return new ResponseEntity<>(this.service.init(), HttpStatus.OK);
+
+    @GetMapping("/transfer")
+    public ResponseEntity<Stat> transfer(@RequestParam(defaultValue = "false") boolean batch) {
+        return new ResponseEntity<>(service.transfer(MODE.NO_TRANSACTION, batch), HttpStatus.OK);
     }
+
+
 }

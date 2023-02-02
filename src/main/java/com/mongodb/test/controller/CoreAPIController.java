@@ -8,20 +8,23 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.mongodb.test.model.Stat;
 import com.mongodb.test.service.AccountService;
+import com.mongodb.test.service.AccountService.MODE;
 
 @RestController
-public class AppController {
+public class CoreAPIController {
     private static final Logger logger = LoggerFactory.getLogger(AppController.class);
 
     @Autowired
     private AccountService service;
 
-    @GetMapping("/init")
-    public ResponseEntity<Stat> startInit() throws InterruptedException {
-        return new ResponseEntity<>(this.service.init(), HttpStatus.OK);
+
+    @GetMapping("/core/transfer")
+    public ResponseEntity<Stat> transferWithCoreAPITransaction(@RequestParam(defaultValue = "false") boolean batch) {
+        return new ResponseEntity<>(service.transfer(MODE.CORE, batch), HttpStatus.OK);
     }
 }
