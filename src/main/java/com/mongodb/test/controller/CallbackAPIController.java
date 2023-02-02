@@ -25,6 +25,6 @@ public class CallbackAPIController {
 
     @GetMapping("/callback/transfer")
     public ResponseEntity<Stat> transferWithCallbackAPITransaction(@RequestParam(defaultValue = "false") boolean batch) {
-        return new ResponseEntity<>(service.transfer(MODE.CALLBACK, batch), HttpStatus.OK);
+        return new ResponseEntity<>(service.transferMultiple(MODE.CALLBACK, batch), HttpStatus.OK);
     }
 }

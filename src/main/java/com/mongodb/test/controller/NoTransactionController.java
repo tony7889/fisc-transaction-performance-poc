@@ -20,7 +20,7 @@ public class NoTransactionController {
 
     @GetMapping("/transfer")
     public ResponseEntity<Stat> transfer(@RequestParam(defaultValue = "false") boolean batch) {
-        return new ResponseEntity<>(service.transfer(MODE.NO_TRANSACTION, batch), HttpStatus.OK);
+        return new ResponseEntity<>(service.transferMultiple(MODE.NO_TRANSACTION, batch), HttpStatus.OK);
     }
 
 

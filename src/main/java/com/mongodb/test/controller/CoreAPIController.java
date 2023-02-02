@@ -25,6 +25,6 @@ public class CoreAPIController {
 
     @GetMapping("/core/transfer")
     public ResponseEntity<Stat> transferWithCoreAPITransaction(@RequestParam(defaultValue = "false") boolean batch) {
-        return new ResponseEntity<>(service.transfer(MODE.CORE, batch), HttpStatus.OK);
+        return new ResponseEntity<>(service.transferMultiple(MODE.CORE, batch), HttpStatus.OK);
     }
 }

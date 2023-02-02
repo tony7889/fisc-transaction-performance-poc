@@ -5,7 +5,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
-import java.util.stream.Collectors;
 
 import org.bson.Document;
 import org.slf4j.Logger;
@@ -21,6 +20,7 @@ import com.mongodb.client.model.Accumulators;
 import com.mongodb.client.model.Aggregates;
 import com.mongodb.test.model.Account;
 import com.mongodb.test.model.Stat;
+import com.mongodb.test.model.Transfer;
 
 @Service
 public class AccountService {
@@ -41,6 +41,12 @@ public class AccountService {
     @Value("${settings.noOfTransfer}")
     private int noOfTransfer;
 
+    @Value("${settings.noOfThread}")
+    private int noOfThread;
+
+    @Value("${settings.transferAmount}")
+    private int transferAmount;
+
     @Value("${settings.initialBalance}")
     private int initialBalance;
 
@@ -59,7 +65,7 @@ public class AccountService {
             accounts.add(new Account(i + 1, initialBalance));
         }
         var ends = new ArrayList<CompletableFuture<StopWatch>>();
-        int pageSize = this.noOfAccount / 10;
+        int pageSize = this.noOfAccount / this.noOfThread;
         int accPages = accounts.size() / pageSize;
         for (int pageIdx = 0; pageIdx <= accPages; pageIdx++) {
             int fromIdx = pageIdx * pageSize;
@@ -86,34 +92,67 @@ public class AccountService {
         return s;
     }
 
-    public Stat transfer(MODE mode, boolean isBatch) {
+    public Stat transferMultiple(MODE mode, boolean isBatch) {
         Stat s = new Stat();
+        StopWatch sw = new StopWatch();
         var ends = new ArrayList<CompletableFuture<StopWatch>>();
-        for (int i = 0; i < noOfTransfer; i++) {
+        List<Transfer> transfers = generateTransfer();
+
+        int pageSize = transfers.size() / this.noOfThread;
+        int accPages = transfers.size() / pageSize;
+        for (int pageIdx = 0; pageIdx <= accPages; pageIdx++) {
+            int fromIdx = pageIdx * pageSize;
+            int toIdx = Math.min(transfers.size(), (pageIdx + 1) * pageSize);
+            var subList = transfers.subList(fromIdx, toIdx);
+
             switch (mode) {
                 case NO_TRANSACTION:
-                    ends.add(this.asyncService.transfer(isBatch));
+                    ends.add(this.asyncService.transfer(subList, isBatch));
                     break;
                 case CALLBACK:
-                    ends.add(this.asyncService.callbackTransfer(isBatch));
+                    ends.add(this.asyncService.callbackTransfer(subList, isBatch));
                     break;
                 case CORE:
-                    ends.add(this.asyncService.coreTransfer(isBatch));
+                    ends.add(this.asyncService.coreTransfer(subList, isBatch));
                     break;
+            }
+
+            if (toIdx == transfers.size()) {
+                break;
             }
         }
 
         s.setOperation("transfer-update");
-        s.setBatchSize(noOfTransfer*51);
+        s.setBatchSize(noOfTransfer*(transferAmount+1));
         s.setStartAt(LocalDateTime.now());
-        ends.stream().map(CompletableFuture::join).forEach((sw) -> {
+        sw.start();
+        CompletableFuture.allOf(ends.toArray(new CompletableFuture[ends.size()])).join();
+        /*ends.stream().map(CompletableFuture::join).forEach((sw) -> {
             s.setDuration(sw.getTotalTimeMillis());
-        });
+        });*/
+        sw.stop();
+        s.setDuration(sw.getTotalTimeMillis());
         s.setEndAt(LocalDateTime.now());
-        //CompletableFuture.allOf(ends.toArray(new CompletableFuture[ends.size()])).join();
         Document doc = database.getCollection(collectionName).aggregate(Arrays.asList(
                 Aggregates.group("true", Accumulators.sum("total", "$balance")))).first();
         logger.info("End Batch, total amount in the world:" + doc.toString());
         return s;
+    }
+    public Stat longTransaction(long waitTime) throws InterruptedException {
+        return this.asyncService.longTransaction(waitTime, generateTransfer());
+    }
+    private List<Transfer> generateTransfer(){
+        List<Transfer> transfers = new ArrayList<>();
+        for (int i = 0; i < noOfTransfer; i++) {
+            Transfer t = new Transfer();
+            t.setFromAccountId((int) Math.floor(Math.random() * noOfAccount) + 1);
+            for (int j = 0; j < transferAmount; j++) {
+                if(t.getToAccountId()==null)
+                    t.setToAccountId(new ArrayList<>());
+                t.getToAccountId().add((int) Math.floor(Math.random() * noOfAccount) + 1);
+            }
+            transfers.add(t);
+        }
+        return transfers;
     }
 }
