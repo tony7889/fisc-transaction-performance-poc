@@ -92,8 +92,11 @@ public class AccountService {
 
         return s;
     }
-
     public Stat transferMultiple(MODE mode, boolean isBatch) {
+        return this.transferMultiple(mode, isBatch, false);
+    }
+
+    public Stat transferMultiple(MODE mode, boolean isBatch, boolean hasError) {
         Stat s = new Stat();
         StopWatch sw = new StopWatch();
         var ends = new ArrayList<CompletableFuture<StopWatch>>();
@@ -111,13 +114,13 @@ public class AccountService {
 
             switch (mode) {
                 case NO_TRANSACTION:
-                    ends.add(this.asyncService.transfer(subList, isBatch));
+                    ends.add(this.asyncService.transfer(subList, isBatch, hasError));
                     break;
                 case CALLBACK:
-                    ends.add(this.asyncService.callbackTransfer(subList, isBatch));
+                    ends.add(this.asyncService.callbackTransfer(subList, isBatch, hasError));
                     break;
                 case CORE:
-                    ends.add(this.asyncService.coreTransfer(subList, isBatch));
+                    ends.add(this.asyncService.coreTransfer(subList, isBatch, hasError));
                     break;
             }
 

@@ -11,6 +11,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.config.YamlProcessor;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StopWatch;
@@ -58,7 +59,7 @@ public class AsyncAccountService {
     }
 
     @Async
-    public CompletableFuture<StopWatch> callbackTransfer(List<Transfer> transfers, boolean isBatch) {
+    public CompletableFuture<StopWatch> callbackTransfer(List<Transfer> transfers, boolean isBatch, boolean hasError) {
         StopWatch sw = null;
         final ClientSession clientSession = client.startSession();
         TransactionOptions txnOptions = TransactionOptions.builder()
@@ -68,7 +69,7 @@ public class AsyncAccountService {
                 .build();
         TransactionBody<StopWatch> txnBody = new TransactionBody<StopWatch>() {
             public StopWatch execute() {
-                return isBatch?transferBatch(clientSession, transfers):transfer(clientSession, transfers);
+                return isBatch?transferBatch(clientSession, transfers):transfer(clientSession, transfers, hasError);
             }
         };
         try {
@@ -82,7 +83,7 @@ public class AsyncAccountService {
     }
 
     @Async
-    public CompletableFuture<StopWatch> coreTransfer(List<Transfer> transfers, boolean isBatch) {
+    public CompletableFuture<StopWatch> coreTransfer(List<Transfer> transfers, boolean isBatch, boolean hasError) {
         StopWatch sw;
         UUID tranId = null;
         while (true) {
@@ -97,7 +98,7 @@ public class AsyncAccountService {
                     clientSession.startTransaction(txnOptions);
                     tranId = clientSession.getServerSession().getIdentifier().getBinary("id").asUuid();
                     logger.info("Start Transaction: "+tranId);
-                    sw = isBatch?this.transferBatch(clientSession, transfers):this.transfer(clientSession, transfers);
+                    sw = isBatch?this.transferBatch(clientSession, transfers):this.transfer(clientSession, transfers, hasError);
                     while (true) {
                         try {
                             clientSession.commitTransaction();
@@ -136,23 +137,44 @@ public class AsyncAccountService {
     }
 
     @Async
+    public CompletableFuture<StopWatch> transfer(List<Transfer> transfers, boolean isBatch, boolean hasError) {
+        return CompletableFuture.completedFuture(isBatch?this.transferBatch(null, transfers):this.transfer(null, transfers, hasError));
+    }
+
+    @Async
     public CompletableFuture<StopWatch> transfer(List<Transfer> transfers, boolean isBatch) {
         return CompletableFuture.completedFuture(isBatch?this.transferBatch(null, transfers):this.transfer(null, transfers));
     }
 
     private StopWatch transfer(ClientSession clientSession, List<Transfer> transfers) {
+        return this.transfer(clientSession, transfers, false);
+    }
+    private StopWatch transfer(ClientSession clientSession, List<Transfer> transfers, boolean hasError) {
         for(Transfer t: transfers){
             StopWatch sw = new StopWatch();
             sw.start();
             int transferAmount = t.getToAccountId().size();
             MongoCollection<Account> collection = database.getCollection(collectionName, Account.class);
             logger.info(Thread.currentThread().getName() + " Deduct $" + transferAmount + " from account " + t.getFromAccountId());
+            Account a = null;
+            if (clientSession != null)
+                a = collection.find(clientSession, Filters.eq("_id", t.getFromAccountId())).first();                   
+            else
+                a = collection.find(Filters.eq("_id", t.getFromAccountId())).first();
+            if(a==null || a.getBalance()<transferAmount){
+                logger.info("Account "+a.getId()+" have not enough balance, skip transfer");
+                continue;
+            }
+
             if (clientSession != null)
                 collection.updateOne(clientSession, Filters.eq("_id", t.getFromAccountId()),
                         Updates.inc("balance", -transferAmount));
             else
                 collection.updateOne(Filters.eq("_id", t.getFromAccountId()), Updates.inc("balance", -transferAmount));
             for (Integer id2 : t.getToAccountId()) {
+                if(hasError && Math.random()>0.8){
+                    throw new RuntimeException("Unexpected error. Something went wrong");
+                }
                 if (clientSession != null)
                     collection.updateOne(clientSession, Filters.eq("_id", id2), Updates.inc("balance", 1));
                 else
@@ -173,6 +195,15 @@ public class AsyncAccountService {
         List<UpdateOneModel<Account>> list = new ArrayList<>();
         for(Transfer t: transfers){
             int transferAmount = t.getToAccountId().size();
+            Account a = null;
+            if (clientSession != null)
+                a = collection.find(clientSession, Filters.eq("_id", t.getFromAccountId())).first();                   
+            else
+                a = collection.find(Filters.eq("_id", t.getFromAccountId())).first();
+            if(a==null || a.getBalance()<transferAmount){
+                logger.info("Account "+a.getId()+" have not enough balance, skip transfer");
+                continue;
+            }
             list.add(new UpdateOneModel<>(Filters.eq("_id", t.getFromAccountId()), Updates.inc("balance", -transferAmount)));
             for (Integer id2 : t.getToAccountId()) {
                 list.add(new UpdateOneModel<>(Filters.eq("_id", id2), Updates.inc("balance", 1)));
