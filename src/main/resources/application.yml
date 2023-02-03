@@ -1,8 +1,8 @@
 spring:
   data:
     mongodb:
-      #uri: mongodb+srv://admin:admin@demo.uskpz.mongodb.net/hkjc?authSource=admin
-      uri: mongodb+srv://admin:admin@demo.uskpz.mongodb.net/hkjc?authSource=admin
+      #uri: mongodb+srv://admin:admin@demo.uskpz.mongodb.net/test?authSource=admin
+      uri: mongodb+srv://admin:admin@demo.uskpz.mongodb.net/test?authSource=admin
 settings:
   dbName: test-transaction
   collectionName: account
