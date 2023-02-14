@@ -86,6 +86,7 @@ public class AsyncAccountService {
     public CompletableFuture<StopWatch> coreTransfer(List<Transfer> transfers, boolean isBatch, boolean hasError) {
         StopWatch sw;
         UUID tranId = null;
+        int retryCount=0;
         while (true) {
             try {
                 TransactionOptions txnOptions = TransactionOptions.builder()
@@ -108,6 +109,7 @@ public class AsyncAccountService {
                             // can retry commit
                             if (e.hasErrorLabel(MongoException.UNKNOWN_TRANSACTION_COMMIT_RESULT_LABEL)) {
                                 logger.info("UnknownTransactionCommitResult, retrying "+tranId+" commit operation ...");
+                                retryCount++;
                                 continue;
                             } else {
                                 logger.info("Exception during commit ...");
@@ -122,8 +124,9 @@ public class AsyncAccountService {
                 if (e.hasErrorLabel(MongoException.TRANSIENT_TRANSACTION_ERROR_LABEL)) {
                     // e.printStackTrace();
                     logger.info("TransientTransactionError, aborting transaction "+tranId+" and retrying ...");
+                    retryCount++;
                     try {
-                        Thread.sleep(1000);
+                        Thread.sleep(100);
                     } catch (InterruptedException e1) {
                         e1.printStackTrace();
                     }
@@ -133,6 +136,7 @@ public class AsyncAccountService {
                 }
             }
         }
+        logger.info("Retry count:"+retryCount);
         return CompletableFuture.completedFuture(sw);
     }
 
@@ -209,11 +213,12 @@ public class AsyncAccountService {
                 list.add(new UpdateOneModel<>(Filters.eq("_id", id2), Updates.inc("balance", 1)));
             }
         }
-
-        if (clientSession != null)
-            collection.bulkWrite(clientSession, list);
-        else
-            collection.bulkWrite(list);
+        if(!list.isEmpty()){
+            if (clientSession != null)
+                collection.bulkWrite(clientSession, list);
+            else
+                collection.bulkWrite(list);
+        }
         sw.stop();
         logger.info((clientSession==null?"":("clientSession: "+clientSession.getServerSession().getIdentifier().getBinary("id").asUuid()+" "))+"Completed "+transfers.size()+" transfers, total "+ list.size() +" operations takes "
                 + sw.getTotalTimeMillis() + "ms, TPS:"+list.size()/sw.getTotalTimeSeconds());

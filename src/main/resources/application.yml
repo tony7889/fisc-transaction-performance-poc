@@ -7,13 +7,13 @@ settings:
   dbName: test-transaction
   collectionName: account
 
-  noOfThread: 20 # No. of workers to process generated transaction, Higher value will introduce more transaction & threads, Lower value will introduce larger batch size
-  noOfAccount: 100 # Total no. of Accounts, fewer accounts will have greater chance to introduce write conflict (transaction retry)
+  noOfThread: 100 # No. of workers to process generated transaction, Higher value will introduce more transaction & threads, Lower value will introduce larger batch size
+  noOfAccount: 100000 # Total no. of Accounts, fewer accounts will have greater chance to introduce write conflict (transaction retry)
   initialBalance: 100 # Initial balance of each accounts
-  noOfTransfer: 10 # How many transfer occurs simultaneously, Higher value will introduce more transaction/greater batch size
+  noOfTransfer: 1000 # How many transfer occurs simultaneously, Higher value will introduce more transaction/greater batch size
   transferAmount: 50 # How many amount will be deduct from a random account and thus how many random transferee accounts balance will be added by $1 each, greater number will introduce greater chance of write conflict (transaction retry)
 
   #App thread pool setting
   corePoolsize: 10 
   maxPoolSize: 30
-  queueSize: 10
+  queueSize: 100000
