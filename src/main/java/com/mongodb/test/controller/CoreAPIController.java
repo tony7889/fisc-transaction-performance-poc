@@ -23,7 +23,7 @@ public class CoreAPIController {
 
 
     @GetMapping("/core/transfer")
-    public ResponseEntity<Stat> transferWithCoreAPITransaction(@RequestParam(defaultValue = "false") boolean batch, @RequestParam(defaultValue = "false") boolean hasError) {
-        return new ResponseEntity<>(service.transferMultiple(MODE.CORE, batch, hasError), HttpStatus.OK);
+    public ResponseEntity<Stat> transferWithCoreAPITransaction(@RequestParam(defaultValue = "false") boolean batch, @RequestParam(defaultValue = "false") boolean hasError, @RequestParam(required = false) String shard) {
+        return new ResponseEntity<>(service.transferMultiple(MODE.CORE, batch, hasError, shard), HttpStatus.OK);
     }
 }

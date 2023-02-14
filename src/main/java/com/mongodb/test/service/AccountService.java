@@ -57,10 +57,17 @@ public class AccountService {
     @Autowired
     private AsyncAccountService asyncService;
 
-    public Stat init() throws InterruptedException {
+    public Stat init(String shard) throws InterruptedException {
         Stat s = new Stat();
         MongoCollection<Account> collection = database.getCollection(collectionName, Account.class);
-        collection.drop();
+        if(shard!=null){
+            if("hashed".equalsIgnoreCase(shard))
+                collection = database.getCollection(collectionName+"HashedShard", Account.class);
+            else if("ranged".equalsIgnoreCase(shard))
+                collection = database.getCollection(collectionName+"RangedShard", Account.class);
+        }
+        collection.deleteMany(new Document());
+        
         var accounts = new ArrayList<Account>();
         for (int i = 0; i < this.noOfAccount; i++) {
             accounts.add(new Account(i + 1, initialBalance));
@@ -92,11 +99,11 @@ public class AccountService {
 
         return s;
     }
-    public Stat transferMultiple(MODE mode, boolean isBatch) {
-        return this.transferMultiple(mode, isBatch, false);
+    public Stat transferMultiple(MODE mode, boolean isBatch, String shard) {
+        return this.transferMultiple(mode, isBatch, false, shard);
     }
 
-    public Stat transferMultiple(MODE mode, boolean isBatch, boolean hasError) {
+    public Stat transferMultiple(MODE mode, boolean isBatch, boolean hasError, String shard) {
         Stat s = new Stat();
         StopWatch sw = new StopWatch();
         var ends = new ArrayList<CompletableFuture<StopWatch>>();
@@ -114,13 +121,13 @@ public class AccountService {
 
             switch (mode) {
                 case NO_TRANSACTION:
-                    ends.add(this.asyncService.transfer(subList, isBatch, hasError));
+                    ends.add(this.asyncService.transfer(subList, isBatch, hasError, shard));
                     break;
                 case CALLBACK:
-                    ends.add(this.asyncService.callbackTransfer(subList, isBatch, hasError));
+                    ends.add(this.asyncService.callbackTransfer(subList, isBatch, hasError, shard));
                     break;
                 case CORE:
-                    ends.add(this.asyncService.coreTransfer(subList, isBatch, hasError));
+                    ends.add(this.asyncService.coreTransfer(subList, isBatch, hasError, shard));
                     break;
             }
 

@@ -19,8 +19,8 @@ public class NoTransactionController {
 
 
     @GetMapping("/transfer")
-    public ResponseEntity<Stat> transfer(@RequestParam(defaultValue = "false") boolean batch, @RequestParam(defaultValue = "false") boolean hasError) {
-        return new ResponseEntity<>(service.transferMultiple(MODE.NO_TRANSACTION, batch, hasError), HttpStatus.OK);
+    public ResponseEntity<Stat> transfer(@RequestParam(defaultValue = "false") boolean batch, @RequestParam(defaultValue = "false") boolean hasError, @RequestParam(required = false) String shard) {
+        return new ResponseEntity<>(service.transferMultiple(MODE.NO_TRANSACTION, batch, hasError, shard), HttpStatus.OK);
     }
 
 

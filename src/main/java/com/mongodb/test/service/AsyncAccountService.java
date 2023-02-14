@@ -11,7 +11,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.beans.factory.config.YamlProcessor;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StopWatch;
@@ -59,7 +58,7 @@ public class AsyncAccountService {
     }
 
     @Async
-    public CompletableFuture<StopWatch> callbackTransfer(List<Transfer> transfers, boolean isBatch, boolean hasError) {
+    public CompletableFuture<StopWatch> callbackTransfer(List<Transfer> transfers, boolean isBatch, boolean hasError, String shard) {
         StopWatch sw = null;
         final ClientSession clientSession = client.startSession();
         TransactionOptions txnOptions = TransactionOptions.builder()
@@ -69,7 +68,7 @@ public class AsyncAccountService {
                 .build();
         TransactionBody<StopWatch> txnBody = new TransactionBody<StopWatch>() {
             public StopWatch execute() {
-                return isBatch?transferBatch(clientSession, transfers):transfer(clientSession, transfers, hasError);
+                return isBatch?transferBatch(clientSession, transfers, shard):transfer(clientSession, transfers, hasError, shard);
             }
         };
         try {
@@ -83,7 +82,7 @@ public class AsyncAccountService {
     }
 
     @Async
-    public CompletableFuture<StopWatch> coreTransfer(List<Transfer> transfers, boolean isBatch, boolean hasError) {
+    public CompletableFuture<StopWatch> coreTransfer(List<Transfer> transfers, boolean isBatch, boolean hasError, String shard) {
         StopWatch sw;
         UUID tranId = null;
         int retryCount=0;
@@ -99,7 +98,7 @@ public class AsyncAccountService {
                     clientSession.startTransaction(txnOptions);
                     tranId = clientSession.getServerSession().getIdentifier().getBinary("id").asUuid();
                     logger.info("Start Transaction: "+tranId);
-                    sw = isBatch?this.transferBatch(clientSession, transfers):this.transfer(clientSession, transfers, hasError);
+                    sw = isBatch?this.transferBatch(clientSession, transfers, shard):this.transfer(clientSession, transfers, hasError, shard);
                     while (true) {
                         try {
                             clientSession.commitTransaction();
@@ -141,24 +140,33 @@ public class AsyncAccountService {
     }
 
     @Async
-    public CompletableFuture<StopWatch> transfer(List<Transfer> transfers, boolean isBatch, boolean hasError) {
-        return CompletableFuture.completedFuture(isBatch?this.transferBatch(null, transfers):this.transfer(null, transfers, hasError));
+    public CompletableFuture<StopWatch> transfer(List<Transfer> transfers, boolean isBatch, boolean hasError, String shard) {
+        return CompletableFuture.completedFuture(isBatch?this.transferBatch(null, transfers, shard):this.transfer(null, transfers, hasError,shard));
     }
 
     @Async
-    public CompletableFuture<StopWatch> transfer(List<Transfer> transfers, boolean isBatch) {
-        return CompletableFuture.completedFuture(isBatch?this.transferBatch(null, transfers):this.transfer(null, transfers));
+    public CompletableFuture<StopWatch> transfer(List<Transfer> transfers, boolean isBatch, String shard) {
+        return CompletableFuture.completedFuture(isBatch?this.transferBatch(null, transfers, shard):this.transfer(null, transfers, shard));
     }
 
     private StopWatch transfer(ClientSession clientSession, List<Transfer> transfers) {
-        return this.transfer(clientSession, transfers, false);
+        return this.transfer(clientSession, transfers, false, null);
     }
-    private StopWatch transfer(ClientSession clientSession, List<Transfer> transfers, boolean hasError) {
+    private StopWatch transfer(ClientSession clientSession, List<Transfer> transfers, String shard) {
+        return this.transfer(clientSession, transfers, false, shard);
+    }
+    private StopWatch transfer(ClientSession clientSession, List<Transfer> transfers, boolean hasError, String shard) {
         for(Transfer t: transfers){
             StopWatch sw = new StopWatch();
             sw.start();
             int transferAmount = t.getToAccountId().size();
             MongoCollection<Account> collection = database.getCollection(collectionName, Account.class);
+            if(shard!=null){
+                if("hashed".equalsIgnoreCase(shard))
+                    collection = database.getCollection(collectionName+"HashedShard", Account.class);
+                else if("ranged".equalsIgnoreCase(shard))
+                    collection = database.getCollection(collectionName+"RangedShard", Account.class);
+            }
             logger.info(Thread.currentThread().getName() + " Deduct $" + transferAmount + " from account " + t.getFromAccountId());
             Account a = null;
             if (clientSession != null)
@@ -191,11 +199,17 @@ public class AsyncAccountService {
         return null;
     }
 
-    private StopWatch transferBatch(ClientSession clientSession, List<Transfer> transfers) {
+    private StopWatch transferBatch(ClientSession clientSession, List<Transfer> transfers, String shard) {
 
         StopWatch sw = new StopWatch();
         sw.start();
         MongoCollection<Account> collection = database.getCollection(collectionName, Account.class);
+        if(shard!=null){
+            if("hashed".equalsIgnoreCase(shard))
+                collection = database.getCollection(collectionName+"HashedShard", Account.class);
+            else if("ranged".equalsIgnoreCase(shard))
+                collection = database.getCollection(collectionName+"RangedShard", Account.class);
+        }
         List<UpdateOneModel<Account>> list = new ArrayList<>();
         for(Transfer t: transfers){
             int transferAmount = t.getToAccountId().size();

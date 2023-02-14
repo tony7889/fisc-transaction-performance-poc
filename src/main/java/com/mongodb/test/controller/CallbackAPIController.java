@@ -23,7 +23,7 @@ public class CallbackAPIController {
 
 
     @GetMapping("/callback/transfer")
-    public ResponseEntity<Stat> transferWithCallbackAPITransaction(@RequestParam(defaultValue = "false") boolean batch, @RequestParam(defaultValue = "false") boolean hasError) {
-        return new ResponseEntity<>(service.transferMultiple(MODE.CALLBACK, batch, hasError), HttpStatus.OK);
+    public ResponseEntity<Stat> transferWithCallbackAPITransaction(@RequestParam(defaultValue = "false") boolean batch, @RequestParam(defaultValue = "false") boolean hasError, @RequestParam(required = false) String shard) {
+        return new ResponseEntity<>(service.transferMultiple(MODE.CALLBACK, batch, hasError, shard), HttpStatus.OK);
     }
 }
