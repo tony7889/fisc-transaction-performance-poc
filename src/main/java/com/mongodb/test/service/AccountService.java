@@ -57,7 +57,7 @@ public class AccountService {
     @Autowired
     private AsyncAccountService asyncService;
 
-    public Stat init(String shard) throws InterruptedException {
+    public Stat init(boolean clear, String shard) throws InterruptedException {
         Stat s = new Stat();
         MongoCollection<Account> collection = database.getCollection(collectionName, Account.class);
         if(shard!=null){
@@ -66,7 +66,9 @@ public class AccountService {
             else if("ranged".equalsIgnoreCase(shard))
                 collection = database.getCollection(collectionName+"RangedShard", Account.class);
         }
-        collection.deleteMany(new Document());
+        if(clear){
+            collection.deleteMany(new Document());
+        }
         
         var accounts = new ArrayList<Account>();
         for (int i = 0; i < this.noOfAccount; i++) {

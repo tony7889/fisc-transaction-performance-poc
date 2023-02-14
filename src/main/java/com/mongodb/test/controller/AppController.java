@@ -22,7 +22,7 @@ public class AppController {
     private AccountService service;
 
     @GetMapping("/init")
-    public ResponseEntity<Stat> startInit(@RequestParam(required = false) String shard) throws InterruptedException {
-        return new ResponseEntity<>(this.service.init(shard), HttpStatus.OK);
+    public ResponseEntity<Stat> startInit(@RequestParam(defaultValue = "false") boolean clear, @RequestParam(required = false) String shard) throws InterruptedException {
+        return new ResponseEntity<>(this.service.init(clear, shard), HttpStatus.OK);
     }
 }
