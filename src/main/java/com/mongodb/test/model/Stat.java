@@ -16,6 +16,6 @@ public class Stat {
     public void setDuration(long duration) {
         if (duration > this.duration)
             this.duration = duration;
-        this.tps = (double)batchSize / this.duration;
+        this.tps = (double)batchSize / this.duration * 1000;
     }
 }

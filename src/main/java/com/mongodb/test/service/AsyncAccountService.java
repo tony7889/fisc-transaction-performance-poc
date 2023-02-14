@@ -26,10 +26,12 @@ import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
 import com.mongodb.client.TransactionBody;
 import com.mongodb.client.model.Filters;
+import com.mongodb.client.model.InsertOneModel;
 import com.mongodb.client.model.UpdateOneModel;
 import com.mongodb.client.model.Updates;
 import com.mongodb.test.model.Account;
 import com.mongodb.test.model.Transfer;
+import com.mongodb.test.model.TransferLog;
 
 @Service
 public class AsyncAccountService {
@@ -43,6 +45,9 @@ public class AsyncAccountService {
 
     @Value("${settings.collectionName}")
     private String collectionName;
+
+    @Value("${settings.transferLogCollectionName}")
+    private String transferLogCollectionName;
 
     @Async
     public CompletableFuture<StopWatch> insertMany(MongoCollection<Account> collection, List<Account> accounts)
@@ -161,11 +166,16 @@ public class AsyncAccountService {
             sw.start();
             int transferAmount = t.getToAccountId().size();
             MongoCollection<Account> collection = database.getCollection(collectionName, Account.class);
+            MongoCollection<TransferLog> transferLogCollection = database.getCollection(transferLogCollectionName, TransferLog.class);
             if(shard!=null){
-                if("hashed".equalsIgnoreCase(shard))
+                if("hashed".equalsIgnoreCase(shard)){
                     collection = database.getCollection(collectionName+"HashedShard", Account.class);
-                else if("ranged".equalsIgnoreCase(shard))
+                    transferLogCollection = database.getCollection(transferLogCollectionName+"HashedShard", TransferLog.class);
+                }
+                else if("ranged".equalsIgnoreCase(shard)){
                     collection = database.getCollection(collectionName+"RangedShard", Account.class);
+                    transferLogCollection = database.getCollection(transferLogCollectionName+"RangedShard", TransferLog.class);
+                }
             }
             logger.info(Thread.currentThread().getName() + " Deduct $" + transferAmount + " from account " + t.getFromAccountId());
             Account a = null;
@@ -183,6 +193,7 @@ public class AsyncAccountService {
                         Updates.inc("balance", -transferAmount));
             else
                 collection.updateOne(Filters.eq("_id", t.getFromAccountId()), Updates.inc("balance", -transferAmount));
+
             for (Integer id2 : t.getToAccountId()) {
                 if(hasError && Math.random()>0.8){
                     throw new RuntimeException("Unexpected error. Something went wrong");
@@ -191,6 +202,12 @@ public class AsyncAccountService {
                     collection.updateOne(clientSession, Filters.eq("_id", id2), Updates.inc("balance", 1));
                 else
                     collection.updateOne(Filters.eq("_id", id2), Updates.inc("balance", 1));
+
+                TransferLog log = new TransferLog(1, t.getFromAccountId(), id2);
+                if (clientSession != null)
+                    transferLogCollection.insertOne(clientSession, log);
+                else
+                    transferLogCollection.insertOne(log);
             }
             sw.stop();
             logger.info((clientSession==null?"":("clientSession: "+clientSession.getServerSession().getIdentifier().getBinary("id").asUuid()+" "))+"Completed transfer $1x"+t.getToAccountId().size()+" from " + t.getFromAccountId() + " to " + Arrays.toString(t.getToAccountId().toArray()) + ". takes "
@@ -204,13 +221,19 @@ public class AsyncAccountService {
         StopWatch sw = new StopWatch();
         sw.start();
         MongoCollection<Account> collection = database.getCollection(collectionName, Account.class);
+        MongoCollection<TransferLog> transferLogCollection = database.getCollection(transferLogCollectionName, TransferLog.class);
         if(shard!=null){
-            if("hashed".equalsIgnoreCase(shard))
+            if("hashed".equalsIgnoreCase(shard)){
                 collection = database.getCollection(collectionName+"HashedShard", Account.class);
-            else if("ranged".equalsIgnoreCase(shard))
+                transferLogCollection = database.getCollection(transferLogCollectionName+"HashedShard", TransferLog.class);
+            }
+            else if("ranged".equalsIgnoreCase(shard)){
                 collection = database.getCollection(collectionName+"RangedShard", Account.class);
+                transferLogCollection = database.getCollection(transferLogCollectionName+"RangedShard", TransferLog.class);
+            }
         }
         List<UpdateOneModel<Account>> list = new ArrayList<>();
+        List<InsertOneModel<TransferLog>> listTransferLog = new ArrayList<>();
         for(Transfer t: transfers){
             int transferAmount = t.getToAccountId().size();
             Account a = null;
@@ -225,16 +248,21 @@ public class AsyncAccountService {
             list.add(new UpdateOneModel<>(Filters.eq("_id", t.getFromAccountId()), Updates.inc("balance", -transferAmount)));
             for (Integer id2 : t.getToAccountId()) {
                 list.add(new UpdateOneModel<>(Filters.eq("_id", id2), Updates.inc("balance", 1)));
+                listTransferLog.add(new InsertOneModel<TransferLog>(new TransferLog(1, t.getFromAccountId(), id2)));
             }
         }
         if(!list.isEmpty()){
-            if (clientSession != null)
+            if (clientSession != null){
                 collection.bulkWrite(clientSession, list);
-            else
+                transferLogCollection.bulkWrite(clientSession, listTransferLog);
+            }
+            else{
                 collection.bulkWrite(list);
+                transferLogCollection.bulkWrite(listTransferLog);
+            }
         }
         sw.stop();
-        logger.info((clientSession==null?"":("clientSession: "+clientSession.getServerSession().getIdentifier().getBinary("id").asUuid()+" "))+"Completed "+transfers.size()+" transfers, total "+ list.size() +" operations takes "
+        logger.info((clientSession==null?"":("clientSession: "+clientSession.getServerSession().getIdentifier().getBinary("id").asUuid()+" "))+"Completed "+transfers.size()+" transfers, total "+ (list.size()+listTransferLog.size()) +" operations takes "
                 + sw.getTotalTimeMillis() + "ms, TPS:"+list.size()/sw.getTotalTimeSeconds());
         return sw;
     }
