@@ -241,6 +241,8 @@ public class AsyncAccountService {
                 a = collection.find(clientSession, Filters.eq("_id", t.getFromAccountId())).first();                   
             else
                 a = collection.find(Filters.eq("_id", t.getFromAccountId())).first();
+            if(a==null)
+                continue;
             if(a==null || a.getBalance()<transferAmount){
                 logger.info("Account "+a.getId()+" have not enough balance, skip transfer");
                 continue;

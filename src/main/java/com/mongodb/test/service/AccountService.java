@@ -51,6 +51,9 @@ public class AccountService {
     @Value("${settings.initialBalance}")
     private int initialBalance;
 
+    @Value("${settings.idPrefix}")
+    private int idPrefix;
+
     @Autowired
     private MongoDatabase database;
 
@@ -67,12 +70,14 @@ public class AccountService {
                 collection = database.getCollection(collectionName+"RangedShard", Account.class);
         }
         if(clear){
+            logger.info("Deleting accounts");
             collection.deleteMany(new Document());
+            logger.info("Finish deleting accounts");
         }
         
         var accounts = new ArrayList<Account>();
         for (int i = 0; i < this.noOfAccount; i++) {
-            accounts.add(new Account(i + 1, initialBalance));
+            accounts.add(new Account(idPrefix+i + 1, initialBalance));
         }
         var ends = new ArrayList<CompletableFuture<StopWatch>>();
         int pageSize = this.noOfAccount / this.noOfThread;
@@ -88,15 +93,17 @@ public class AccountService {
                 break;
             }
         }
-        // CompletableFuture.allOf(ends.toArray(new
-        // CompletableFuture[ends.size()])).join();
 
+        StopWatch sw = new StopWatch();
         s.setOperation("init-insert");
         s.setBatchSize(accounts.size());
         s.setStartAt(LocalDateTime.now());
-        ends.stream().map(CompletableFuture::join).forEach((sw) -> {
-            s.setDuration(sw.getTotalTimeMillis());
-        });
+        sw.start();
+        //ends.stream().map(CompletableFuture::join).forEach((sw) -> {
+        //});
+        CompletableFuture.allOf(ends.toArray(new CompletableFuture[ends.size()])).join();
+        sw.stop();
+        s.setDuration(sw.getTotalTimeMillis());
         s.setEndAt(LocalDateTime.now());
 
         return s;
@@ -171,12 +178,12 @@ public class AccountService {
         List<Transfer> transfers = new ArrayList<>();
         for (int i = 0; i < noOfTransfer; i++) {
             Transfer t = new Transfer();
-            t.setFromAccountId((int) Math.floor(Math.random() * noOfAccount) + 1);
+            t.setFromAccountId(idPrefix+((int) Math.floor(Math.random() * noOfAccount) + 1));
             for (int j = 0; j < transferAmount; j++) {
                 if (t.getToAccountId() == null) {
                     t.setToAccountId(new ArrayList<>());
                 }
-                t.getToAccountId().add((int) Math.floor(Math.random() * noOfAccount) + 1);
+                t.getToAccountId().add(idPrefix+((int) Math.floor(Math.random() * noOfAccount) + 1));
             }
             transfers.add(t);
         }
