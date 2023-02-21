@@ -21,6 +21,7 @@ import com.mongodb.client.model.Aggregates;
 import com.mongodb.test.model.Account;
 import com.mongodb.test.model.Stat;
 import com.mongodb.test.model.Transfer;
+import com.mongodb.test.model.TransferLog;
 
 @Service
 public class AccountService {
@@ -35,6 +36,9 @@ public class AccountService {
 
     @Value("${settings.collectionName}")
     private String collectionName;
+
+    @Value("${settings.transferLogCollectionName}")
+    private String transferLogCollectionName;
 
     @Value("${settings.noOfAccount}")
     private int noOfAccount;
@@ -63,16 +67,25 @@ public class AccountService {
     public Stat init(boolean clear, String shard) throws InterruptedException {
         Stat s = new Stat();
         MongoCollection<Account> collection = database.getCollection(collectionName, Account.class);
+        MongoCollection<TransferLog> transferLogCollection = database.getCollection(transferLogCollectionName, TransferLog.class);
+            
         if(shard!=null){
-            if("hashed".equalsIgnoreCase(shard))
+            if("hashed".equalsIgnoreCase(shard)){
                 collection = database.getCollection(collectionName+"HashedShard", Account.class);
-            else if("ranged".equalsIgnoreCase(shard))
+                transferLogCollection = database.getCollection(transferLogCollectionName+"HashedShard", TransferLog.class);
+            }                
+            else if("ranged".equalsIgnoreCase(shard)){
                 collection = database.getCollection(collectionName+"RangedShard", Account.class);
+                transferLogCollection = database.getCollection(transferLogCollectionName+"HashedShard", TransferLog.class);
+            }                
         }
         if(clear){
             logger.info("Deleting accounts");
             collection.deleteMany(new Document());
             logger.info("Finish deleting accounts");
+            logger.info("Deleting transfer logs");
+            transferLogCollection.deleteMany(new Document());
+            logger.info("Finish deleting transfer logs");
         }
         
         var accounts = new ArrayList<Account>();
@@ -146,7 +159,7 @@ public class AccountService {
         }
 
         s.setOperation("transfer-update");
-        s.setBatchSize(noOfTransfer * (transferAmount + 1));
+        s.setBatchSize(noOfTransfer * ((transferAmount*2) + 1));
         s.setStartAt(LocalDateTime.now());
         sw.start();
         CompletableFuture.allOf(ends.toArray(new CompletableFuture[ends.size()])).join();
