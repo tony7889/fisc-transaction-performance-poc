@@ -128,7 +128,7 @@ public class AccountService {
     public Stat transferMultiple(MODE mode, boolean isBatch, boolean hasError, String shard) {
         Stat s = new Stat();
         StopWatch sw = new StopWatch();
-        var ends = new ArrayList<CompletableFuture<StopWatch>>();
+        var ends = new ArrayList<CompletableFuture<Void>>();
         List<Transfer> transfers = generateTransfer();
 
         int pageSize = transfers.size() / this.noOfThread;

@@ -35,6 +35,7 @@ import com.mongodb.test.model.TransferLog;
 
 @Service
 public class AsyncAccountService {
+
     private Logger logger = LoggerFactory.getLogger(getClass());
 
     @Autowired
@@ -57,261 +58,286 @@ public class AsyncAccountService {
         sw.start();
         collection.insertMany(accounts);
         sw.stop();
-        logger.info(Thread.currentThread().getName() + " " + accounts.size() + " inserted. takes "
-                + sw.getTotalTimeMillis() + "ms, TPS:"+accounts.size()/sw.getTotalTimeSeconds());
+        //logger.info(Thread.currentThread().getName() + " " + accounts.size() + " inserted. takes "
+        //        + sw.getTotalTimeMillis() + "ms, TPS:" + accounts.size() / sw.getTotalTimeSeconds());
         return CompletableFuture.completedFuture(sw);
     }
 
     @Async
-    public CompletableFuture<StopWatch> callbackTransfer(List<Transfer> transfers, boolean isBatch, boolean hasError, String shard) {
-        StopWatch sw = null;
-        final ClientSession clientSession = client.startSession();
-        TransactionOptions txnOptions = TransactionOptions.builder()
-                .readPreference(ReadPreference.primary())
-                .readConcern(ReadConcern.MAJORITY)
-                .writeConcern(WriteConcern.MAJORITY)
-                .build();
-        TransactionBody<StopWatch> txnBody = new TransactionBody<StopWatch>() {
-            public StopWatch execute() {
-                return isBatch?transferBatch(clientSession, transfers, shard):transfer(clientSession, transfers, hasError, shard);
-            }
-        };
-        try {
-            sw = clientSession.withTransaction(txnBody, txnOptions);
-        } catch (RuntimeException e) {
-            logger.error("Error during transfer", e);
-        } finally {
-            clientSession.close();
-        }
-        return CompletableFuture.completedFuture(sw);
-    }
-
-    @Async
-    public CompletableFuture<StopWatch> coreTransfer(List<Transfer> transfers, boolean isBatch, boolean hasError, String shard) {
-        StopWatch sw;
-        UUID tranId = null;
-        int retryCount=0;
-        while (true) {
+    public CompletableFuture<Void> callbackTransfer(List<Transfer> transfers, boolean isBatch, boolean hasError, String shard) {
+        for (Transfer transfer : transfers) {
+            final ClientSession clientSession = client.startSession();
+            TransactionOptions txnOptions = TransactionOptions.builder()
+                    .readPreference(ReadPreference.primary())
+                    .readConcern(ReadConcern.MAJORITY)
+                    .writeConcern(WriteConcern.MAJORITY)
+                    .build();
+            TransactionBody<Void> txnBody = new TransactionBody<Void>() {
+                public Void execute() {
+                    if (isBatch) {
+                        transferBatch(clientSession, transfer, shard); 
+                    }else {
+                        transfer(clientSession, transfer, hasError, shard);
+                    }
+                    return null;
+                }
+            };
             try {
-                TransactionOptions txnOptions = TransactionOptions.builder()
-                        .readPreference(ReadPreference.primary())
-                        .readConcern(ReadConcern.MAJORITY)
-                        // .readConcern(ReadConcern.SNAPSHOT)
-                        .writeConcern(WriteConcern.MAJORITY)
-                        .build();
-                try (ClientSession clientSession = client.startSession()) {
-                    clientSession.startTransaction(txnOptions);
-                    tranId = clientSession.getServerSession().getIdentifier().getBinary("id").asUuid();
-                    logger.info("Start Transaction: "+tranId);
-                    sw = isBatch?this.transferBatch(clientSession, transfers, shard):this.transfer(clientSession, transfers, hasError, shard);
-                    while (true) {
-                        try {
-                            clientSession.commitTransaction();
-                            logger.info("Transaction committed: "+tranId);
-                            break;
-                        } catch (MongoException e) {
-                            // can retry commit
-                            if (e.hasErrorLabel(MongoException.UNKNOWN_TRANSACTION_COMMIT_RESULT_LABEL)) {
-                                logger.info("UnknownTransactionCommitResult, retrying "+tranId+" commit operation ...");
-                                retryCount++;
-                                continue;
-                            } else {
-                                logger.info("Exception during commit ...");
-                                throw e;
+                clientSession.withTransaction(txnBody, txnOptions);
+            } catch (RuntimeException e) {
+                logger.error("Error during transfer", e);
+            } finally {
+                clientSession.close();
+            }
+        }
+        return CompletableFuture.completedFuture(null);
+
+    }
+
+    @Async
+    public CompletableFuture<Void> coreTransfer(List<Transfer> transfers, boolean isBatch, boolean hasError, String shard) {
+        for (Transfer transfer : transfers) {
+
+            UUID tranId = null;
+            int retryCount = 0;
+            while (true) {
+                try {
+                    TransactionOptions txnOptions = TransactionOptions.builder()
+                            .readPreference(ReadPreference.primary())
+                            .readConcern(ReadConcern.MAJORITY)
+                            // .readConcern(ReadConcern.SNAPSHOT)
+                            .writeConcern(WriteConcern.MAJORITY)
+                            .build();
+                    try (ClientSession clientSession = client.startSession()) {
+                        clientSession.startTransaction(txnOptions);
+                        tranId = clientSession.getServerSession().getIdentifier().getBinary("id").asUuid();
+                        logger.info("Start Transaction: " + tranId);
+                        if (isBatch) {
+                            this.transferBatch(clientSession, transfer, shard); 
+                        }else {
+                            this.transfer(clientSession, transfer, hasError, shard);
+                        }
+                        while (true) {
+                            try {
+                                clientSession.commitTransaction();
+                                logger.info("Transaction committed: " + tranId);
+                                break;
+                            } catch (MongoException e) {
+                                // can retry commit
+                                if (e.hasErrorLabel(MongoException.UNKNOWN_TRANSACTION_COMMIT_RESULT_LABEL)) {
+                                    logger.info("UnknownTransactionCommitResult, retrying " + tranId + " commit operation ...");
+                                    retryCount++;
+                                    continue;
+                                } else {
+                                    logger.info("Exception during commit ...");
+                                    throw e;
+                                }
                             }
                         }
                     }
-                }
-                break;
-            } catch (MongoException e) {
-                //logger.info("Transaction aborted. Caught exception during transaction.");
-                if (e.hasErrorLabel(MongoException.TRANSIENT_TRANSACTION_ERROR_LABEL)) {
-                    // e.printStackTrace();
-                    logger.info("TransientTransactionError, aborting transaction "+tranId+" and retrying ...");
-                    retryCount++;
-                    try {
-                        Thread.sleep(100);
-                    } catch (InterruptedException e1) {
-                        e1.printStackTrace();
+                    break;
+                } catch (MongoException e) {
+                    //logger.info("Transaction aborted. Caught exception during transaction.");
+                    if (e.hasErrorLabel(MongoException.TRANSIENT_TRANSACTION_ERROR_LABEL)) {
+                        // e.printStackTrace();
+                        logger.info("TransientTransactionError, aborting transaction " + tranId + " and retrying ...");
+                        retryCount++;
+                        try {
+                            Thread.sleep(100);
+                        } catch (InterruptedException e1) {
+                            e1.printStackTrace();
+                        }
+                        continue;
+                    } else {
+                        throw e;
                     }
-                    continue;
-                } else {
-                    throw e;
                 }
+            }
+            logger.info("Retry count:" + retryCount);
+        }
+        return CompletableFuture.completedFuture(null);
+    }
+
+    @Async
+    public CompletableFuture<Void> transfer(List<Transfer> transfers, boolean isBatch, boolean hasError, String shard) {
+        for (Transfer transfer : transfers) {
+            if (isBatch) {
+                this.transferBatch(null, transfer, shard); 
+            }else {
+                this.transfer(null, transfer, hasError, shard);
             }
         }
-        logger.info("Retry count:"+retryCount);
-        return CompletableFuture.completedFuture(sw);
+        return CompletableFuture.completedFuture(null);
     }
 
     @Async
-    public CompletableFuture<StopWatch> transfer(List<Transfer> transfers, boolean isBatch, boolean hasError, String shard) {
-        return CompletableFuture.completedFuture(isBatch?this.transferBatch(null, transfers, shard):this.transfer(null, transfers, hasError,shard));
+    public CompletableFuture<Void> transfer(Transfer transfer, boolean isBatch, String shard) {
+        if (isBatch) {
+            this.transferBatch(null, transfer, shard); 
+        }else {
+            this.transfer(null, transfer, shard);
+        }
+        return CompletableFuture.completedFuture(null);
     }
 
-    @Async
-    public CompletableFuture<StopWatch> transfer(List<Transfer> transfers, boolean isBatch, String shard) {
-        return CompletableFuture.completedFuture(isBatch?this.transferBatch(null, transfers, shard):this.transfer(null, transfers, shard));
+    private void transfer(ClientSession clientSession, Transfer transfer) {
+        this.transfer(clientSession, transfer, false, null);
     }
 
-    private StopWatch transfer(ClientSession clientSession, List<Transfer> transfers) {
-        return this.transfer(clientSession, transfers, false, null);
+    private void transfer(ClientSession clientSession, Transfer transfer, String shard) {
+        this.transfer(clientSession, transfer, false, shard);
     }
-    private StopWatch transfer(ClientSession clientSession, List<Transfer> transfers, String shard) {
-        return this.transfer(clientSession, transfers, false, shard);
-    }
-    private StopWatch transfer(ClientSession clientSession, List<Transfer> transfers, boolean hasError, String shard) {
-        for(Transfer t: transfers){
-            StopWatch sw = new StopWatch();
-            sw.start();
-            int transferAmount = t.getToAccountId().size();
-            MongoCollection<Account> collection = database.getCollection(collectionName, Account.class);
-            MongoCollection<TransferLog> transferLogCollection = database.getCollection(transferLogCollectionName, TransferLog.class);
-            if(shard!=null){
-                if("hashed".equalsIgnoreCase(shard)){
-                    collection = database.getCollection(collectionName+"HashedShard", Account.class);
-                    transferLogCollection = database.getCollection(transferLogCollectionName+"HashedShard", TransferLog.class);
-                }
-                else if("ranged".equalsIgnoreCase(shard)){
-                    collection = database.getCollection(collectionName+"RangedShard", Account.class);
-                    transferLogCollection = database.getCollection(transferLogCollectionName+"RangedShard", TransferLog.class);
-                }
+
+    private void transfer(ClientSession clientSession, Transfer t, boolean hasError, String shard) {
+        StopWatch sw = new StopWatch();
+        sw.start();
+        int transferAmount = t.getToAccountId().size();
+        MongoCollection<Account> collection = database.getCollection(collectionName, Account.class);
+        MongoCollection<TransferLog> transferLogCollection = database.getCollection(transferLogCollectionName, TransferLog.class);
+        if (shard != null) {
+            if ("hashed".equalsIgnoreCase(shard)) {
+                collection = database.getCollection(collectionName + "HashedShard", Account.class);
+                transferLogCollection = database.getCollection(transferLogCollectionName + "HashedShard", TransferLog.class);
+            } else if ("ranged".equalsIgnoreCase(shard)) {
+                collection = database.getCollection(collectionName + "RangedShard", Account.class);
+                transferLogCollection = database.getCollection(transferLogCollectionName + "RangedShard", TransferLog.class);
             }
-            logger.info(Thread.currentThread().getName() + " Deduct $" + transferAmount + " from account " + t.getFromAccountId());
-            Account a = null;
-            if (clientSession != null)
-                a = collection.find(clientSession, Filters.eq("_id", t.getFromAccountId())).first();                   
-            else
-                a = collection.find(Filters.eq("_id", t.getFromAccountId())).first();
-            if(a==null || a.getBalance()<transferAmount){
-                logger.info("Account "+a.getId()+" have not enough balance, skip transfer");
-                continue;
-            }
+        }
+        logger.info(Thread.currentThread().getName() + " Deduct $" + transferAmount + " from account " + t.getFromAccountId());
+        Account a = null;
+        if (clientSession != null) {
+            a = collection.find(clientSession, Filters.eq("_id", t.getFromAccountId())).first();
+        } else {
+            a = collection.find(Filters.eq("_id", t.getFromAccountId())).first();
+        }
+        if (a == null || a.getBalance() < transferAmount) {
+            logger.info("Account " + a.getId() + " have not enough balance, skip transfer");
+            sw.stop();
+        } else {
 
-            if (clientSession != null)
+            if (clientSession != null) {
                 collection.updateOne(clientSession, Filters.eq("_id", t.getFromAccountId()),
                         Updates.inc("balance", -transferAmount));
-            else
+            } else {
                 collection.updateOne(Filters.eq("_id", t.getFromAccountId()), Updates.inc("balance", -transferAmount));
+            }
 
             for (Integer id2 : t.getToAccountId()) {
-                if(hasError && Math.random()>0.8){
+                if (hasError && Math.random() > 0.8) {
                     throw new RuntimeException("Unexpected error. Something went wrong");
                 }
-                if (clientSession != null)
+                if (clientSession != null) {
                     collection.updateOne(clientSession, Filters.eq("_id", id2), Updates.inc("balance", 1));
-                else
+                } else {
                     collection.updateOne(Filters.eq("_id", id2), Updates.inc("balance", 1));
+                }
 
                 TransferLog log = new TransferLog(1, t.getFromAccountId(), id2);
-                if (clientSession != null)
+                if (clientSession != null) {
                     transferLogCollection.insertOne(clientSession, log);
-                else
+                } else {
                     transferLogCollection.insertOne(log);
+                }
             }
             sw.stop();
-            logger.info((clientSession==null?"":("clientSession: "+clientSession.getServerSession().getIdentifier().getBinary("id").asUuid()+" "))+"Completed transfer $1x"+t.getToAccountId().size()+" from " + t.getFromAccountId() + " to " + Arrays.toString(t.getToAccountId().toArray()) + ". takes "
-                    + sw.getTotalTimeMillis() + "ms, TPS:"+(t.getToAccountId().size()+1)/sw.getTotalTimeSeconds());
+            //logger.info((clientSession == null ? "" : ("clientSession: " + clientSession.getServerSession().getIdentifier().getBinary("id").asUuid() + " ")) + "Completed transfer $1x" + t.getToAccountId().size() + " from " + t.getFromAccountId() + " to " + Arrays.toString(t.getToAccountId().toArray()) + ". takes "
+            //        + sw.getTotalTimeMillis() + "ms, TPS:" + (t.getToAccountId().size() + 1) / sw.getTotalTimeSeconds());
         }
-        return null;
     }
 
-    private StopWatch transferBatch(ClientSession clientSession, List<Transfer> transfers, String shard) {
+    private void transferBatch(ClientSession clientSession, Transfer t, String shard) {
 
         StopWatch sw = new StopWatch();
         sw.start();
         MongoCollection<Account> collection = database.getCollection(collectionName, Account.class);
         MongoCollection<TransferLog> transferLogCollection = database.getCollection(transferLogCollectionName, TransferLog.class);
-        if(shard!=null){
-            if("hashed".equalsIgnoreCase(shard)){
-                collection = database.getCollection(collectionName+"HashedShard", Account.class);
-                transferLogCollection = database.getCollection(transferLogCollectionName+"HashedShard", TransferLog.class);
-            }
-            else if("ranged".equalsIgnoreCase(shard)){
-                collection = database.getCollection(collectionName+"RangedShard", Account.class);
-                transferLogCollection = database.getCollection(transferLogCollectionName+"RangedShard", TransferLog.class);
+        if (shard != null) {
+            if ("hashed".equalsIgnoreCase(shard)) {
+                collection = database.getCollection(collectionName + "HashedShard", Account.class);
+                transferLogCollection = database.getCollection(transferLogCollectionName + "HashedShard", TransferLog.class);
+            } else if ("ranged".equalsIgnoreCase(shard)) {
+                collection = database.getCollection(collectionName + "RangedShard", Account.class);
+                transferLogCollection = database.getCollection(transferLogCollectionName + "RangedShard", TransferLog.class);
             }
         }
         List<UpdateOneModel<Account>> list = new ArrayList<>();
         List<InsertOneModel<TransferLog>> listTransferLog = new ArrayList<>();
-        for(Transfer t: transfers){
-            int transferAmount = t.getToAccountId().size();
-            Account a = null;
-            if (clientSession != null)
-                a = collection.find(clientSession, Filters.eq("_id", t.getFromAccountId())).first();                   
-            else
-                a = collection.find(Filters.eq("_id", t.getFromAccountId())).first();
-            if(a==null)
-                continue;
-            if(a==null || a.getBalance()<transferAmount){
-                logger.info("Account "+a.getId()+" have not enough balance, skip transfer");
-                continue;
-            }
+        int transferAmount = t.getToAccountId().size();
+        Account a = null;
+        if (clientSession != null) {
+            a = collection.find(clientSession, Filters.eq("_id", t.getFromAccountId())).first();
+        } else {
+            a = collection.find(Filters.eq("_id", t.getFromAccountId())).first();
+        }
+        if (a == null || a.getBalance() < transferAmount) {
+            logger.info("Account " + a.getId() + " have not enough balance, skip transfer");
+            sw.stop();
+        } else {
             list.add(new UpdateOneModel<>(Filters.eq("_id", t.getFromAccountId()), Updates.inc("balance", -transferAmount)));
             for (Integer id2 : t.getToAccountId()) {
                 list.add(new UpdateOneModel<>(Filters.eq("_id", id2), Updates.inc("balance", 1)));
                 listTransferLog.add(new InsertOneModel<TransferLog>(new TransferLog(1, t.getFromAccountId(), id2)));
             }
-        }
-        if(!list.isEmpty()){
-            if (clientSession != null){
-                collection.bulkWrite(clientSession, list);
-                transferLogCollection.bulkWrite(clientSession, listTransferLog);
+            if (!list.isEmpty()) {
+                if (clientSession != null) {
+                    collection.bulkWrite(clientSession, list);
+                    transferLogCollection.bulkWrite(clientSession, listTransferLog);
+                } else {
+                    collection.bulkWrite(list);
+                    transferLogCollection.bulkWrite(listTransferLog);
+                }
             }
-            else{
-                collection.bulkWrite(list);
-                transferLogCollection.bulkWrite(listTransferLog);
-            }
+            sw.stop();
+            //logger.info((clientSession == null ? "" : ("clientSession: " + clientSession.getServerSession().getIdentifier().getBinary("id").asUuid() + " ")) + "Completed transfer, total " + (list.size() + listTransferLog.size()) + " operations takes "
+            //        + sw.getTotalTimeMillis() + "ms, TPS:" + list.size() / sw.getTotalTimeSeconds());
         }
-        sw.stop();
-        logger.info((clientSession==null?"":("clientSession: "+clientSession.getServerSession().getIdentifier().getBinary("id").asUuid()+" "))+"Completed "+transfers.size()+" transfers, total "+ (list.size()+listTransferLog.size()) +" operations takes "
-                + sw.getTotalTimeMillis() + "ms, TPS:"+list.size()/sw.getTotalTimeSeconds());
-        return sw;
     }
 
     public void longTransaction(long waitTime, List<Transfer> transfers) throws InterruptedException {
-        UUID tranId = null;
-        while (true) {
-            try {
-                TransactionOptions txnOptions = TransactionOptions.builder()
-                        .readPreference(ReadPreference.primary())
-                        .readConcern(ReadConcern.MAJORITY)
-                        // .readConcern(ReadConcern.SNAPSHOT)
-                        .writeConcern(WriteConcern.MAJORITY)
-                        .build();
-                try (ClientSession clientSession = client.startSession()) {
-                    clientSession.startTransaction(txnOptions);
-                    tranId = clientSession.getServerSession().getIdentifier().getBinary("id").asUuid();
-                    logger.info("Start Transaction: "+tranId);
-                    transfer(clientSession, transfers);
-                    logger.info("Start waiting for commit");
-                    Thread.sleep(waitTime);
-                    while (true) {
-                        try {
-                            clientSession.commitTransaction();
-                            logger.info("Transaction committed: "+tranId);
-                            break;
-                        } catch (MongoException e) {
-                            // can retry commit
-                            if (e.hasErrorLabel(MongoException.UNKNOWN_TRANSACTION_COMMIT_RESULT_LABEL)) {
-                                logger.info("UnknownTransactionCommitResult, retrying "+tranId+" commit operation ...");
-                                continue;
-                            } else {
-                                logger.error("Exception during commit ...", e);
-                                throw e;
+        for (Transfer transfer : transfers) {
+            UUID tranId = null;
+            while (true) {
+                try {
+                    TransactionOptions txnOptions = TransactionOptions.builder()
+                            .readPreference(ReadPreference.primary())
+                            .readConcern(ReadConcern.MAJORITY)
+                            // .readConcern(ReadConcern.SNAPSHOT)
+                            .writeConcern(WriteConcern.MAJORITY)
+                            .build();
+                    try (ClientSession clientSession = client.startSession()) {
+                        clientSession.startTransaction(txnOptions);
+                        tranId = clientSession.getServerSession().getIdentifier().getBinary("id").asUuid();
+                        logger.info("Start Transaction: " + tranId);
+                        transfer(clientSession, transfer);
+                        logger.info("Start waiting for commit");
+                        Thread.sleep(waitTime);
+                        while (true) {
+                            try {
+                                clientSession.commitTransaction();
+                                logger.info("Transaction committed: " + tranId);
+                                break;
+                            } catch (MongoException e) {
+                                // can retry commit
+                                if (e.hasErrorLabel(MongoException.UNKNOWN_TRANSACTION_COMMIT_RESULT_LABEL)) {
+                                    logger.info("UnknownTransactionCommitResult, retrying " + tranId + " commit operation ...");
+                                    continue;
+                                } else {
+                                    logger.error("Exception during commit ...", e);
+                                    throw e;
+                                }
                             }
                         }
                     }
-                }
-                break;
-            } catch (MongoException e) {
-                //logger.info("Transaction aborted. Caught exception during transaction.");
-                if (e.hasErrorLabel(MongoException.TRANSIENT_TRANSACTION_ERROR_LABEL)) {
-                    // e.printStackTrace();
-                    logger.info("TransientTransactionError, aborting transaction "+tranId+" and retrying ...");
-                    continue;
-                } else {
-                    throw e;
+                    break;
+                } catch (MongoException e) {
+                    //logger.info("Transaction aborted. Caught exception during transaction.");
+                    if (e.hasErrorLabel(MongoException.TRANSIENT_TRANSACTION_ERROR_LABEL)) {
+                        // e.printStackTrace();
+                        logger.info("TransientTransactionError, aborting transaction " + tranId + " and retrying ...");
+                        continue;
+                    } else {
+                        throw e;
+                    }
                 }
             }
         }
