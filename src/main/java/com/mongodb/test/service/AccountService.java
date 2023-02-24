@@ -166,9 +166,9 @@ public class AccountService {
         sw.stop();
         s.setDuration(sw.getTotalTimeMillis());
         s.setEndAt(LocalDateTime.now());
-        Document doc = database.getCollection(collectionName).aggregate(Arrays.asList(
-                Aggregates.group("true", Accumulators.sum("total", "$balance")))).first();
-        logger.info("End Batch, total amount in the world:" + doc.toString());
+        // Document doc = database.getCollection(collectionName).aggregate(Arrays.asList(
+        //         Aggregates.group("true", Accumulators.sum("total", "$balance")))).first();
+        // logger.info("End Batch, total amount in the world:" + doc.toString());
         return s;
     }
 
