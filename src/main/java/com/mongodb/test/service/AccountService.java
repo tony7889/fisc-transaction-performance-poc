@@ -189,17 +189,30 @@ public class AccountService {
 
     private List<Transfer> generateTransfer() {
         List<Transfer> transfers = new ArrayList<>();
+        int fromAccountIdPrefix;
+        int toAccountIdPrefix;
         for (int i = 0; i < noOfTransfer; i++) {
             Transfer t = new Transfer();
-            t.setFromAccountId(idPrefix+((int) Math.floor(Math.random() * noOfAccount) + 1));
+            fromAccountIdPrefix = ((int) Math.floor(Math.random() * 6) + 1) * 100000000;
+            t.setFromAccountId(fromAccountIdPrefix  + ((int) Math.floor(Math.random() * noOfAccount) + 1));
             for (int j = 0; j < transferAmount; j++) {
                 if (t.getToAccountId() == null) {
                     t.setToAccountId(new ArrayList<>());
                 }
-                t.getToAccountId().add(idPrefix+((int) Math.floor(Math.random() * noOfAccount) + 1));
+                toAccountIdPrefix = ((int) Math.floor(Math.random() * 6) + 1) * 100000000;
+                t.getToAccountId().add(toAccountIdPrefix + ((int) Math.floor(Math.random() * noOfAccount) + 1));
             }
             transfers.add(t);
         }
         return transfers;
+    }
+
+    public static void main(String[] args) {
+        for(int i=0; i< 100 ;i++){
+            System.out.println(">>>>>>>>" + ((int) Math.floor(Math.random() * 6) + 1) * 100000000);
+
+        }
+
+
     }
 }
