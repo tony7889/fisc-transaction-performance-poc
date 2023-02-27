@@ -1,10 +1,7 @@
 package com.mongodb.test.service;
 
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 
 import org.slf4j.Logger;
@@ -270,7 +267,7 @@ public class AsyncAccountService {
             a = collection.find(Filters.eq("_id", t.getFromAccountId())).first();
         }
         if (a == null || a.getBalance() < transferAmount) {
-            logger.info("Account " + a.getId() + " have not enough balance, skip transfer");
+            logger.info("Account " + (Objects.nonNull(a) ? a.getId() : "a = null") + " have not enough balance, skip transfer");
             sw.stop();
         } else {
             list.add(new UpdateOneModel<>(Filters.eq("_id", t.getFromAccountId()), Updates.inc("balance", -transferAmount)));
