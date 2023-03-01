@@ -201,44 +201,67 @@ public class AsyncAccountService {
             }
         }
         logger.info(Thread.currentThread().getName() + " Deduct $" + transferAmount + " from account " + t.getFromAccountId());
-        Account a = null;
-        if (clientSession != null) {
-            a = collection.find(clientSession, Filters.eq("_id", t.getFromAccountId())).first();
-        } else {
-            a = collection.find(Filters.eq("_id", t.getFromAccountId())).first();
-        }
-        if (a == null || a.getBalance() < transferAmount) {
-            logger.info("Account " + a.getId() + " have not enough balance, skip transfer");
-            sw.stop();
-        } else {
+        // Account a = null;
+        // Start - Tony update to findAndModify from find and update, find and update requires serial read isolation to lock find and update to avoid any changes in the middle
+        // if (clientSession != null) {
+        //     a = collection.find(clientSession, Filters.eq("_id", t.getFromAccountId())).first();
+        // } else {
+        //     a = collection.find(Filters.eq("_id", t.getFromAccountId())).first();
+        // }
+        // if (a == null || a.getBalance() < transferAmount) {
+        //     logger.info("Account " + a.getId() + " have not enough balance, skip transfer");
+        //     sw.stop();
+        // } else {
 
-            if (clientSession != null) {
-                collection.updateOne(clientSession, Filters.eq("_id", t.getFromAccountId()),
-                        Updates.inc("balance", -transferAmount));
-            } else {
-                collection.updateOne(Filters.eq("_id", t.getFromAccountId()), Updates.inc("balance", -transferAmount));
-            }
+        //     if (clientSession != null) {
+        //         collection.updateOne(clientSession, Filters.eq("_id", t.getFromAccountId()),
+        //                 Updates.inc("balance", -transferAmount));
+        //     } else {
+        //         collection.updateOne(Filters.eq("_id", t.getFromAccountId()), Updates.inc("balance", -transferAmount));
+        //     }
 
-            for (Integer id2 : t.getToAccountId()) {
-                if (hasError && Math.random() > 0.8) {
-                    throw new RuntimeException("Unexpected error. Something went wrong");
-                }
-                if (clientSession != null) {
-                    collection.updateOne(clientSession, Filters.eq("_id", id2), Updates.inc("balance", 1));
-                } else {
-                    collection.updateOne(Filters.eq("_id", id2), Updates.inc("balance", 1));
-                }
+        //     for (Integer id2 : t.getToAccountId()) {
+        //         if (hasError && Math.random() > 0.8) {
+        //             throw new RuntimeException("Unexpected error. Something went wrong");
+        //         }
+        //         if (clientSession != null) {
+        //             collection.updateOne(clientSession, Filters.eq("_id", id2), Updates.inc("balance", 1));
+        //         } else {
+        //             collection.updateOne(Filters.eq("_id", id2), Updates.inc("balance", 1));
+        //         }
 
-                TransferLog log = new TransferLog(1, t.getFromAccountId(), id2);
-                if (clientSession != null) {
-                    transferLogCollection.insertOne(clientSession, log);
-                } else {
-                    transferLogCollection.insertOne(log);
-                }
-            }
-            sw.stop();
+        //         TransferLog log = new TransferLog(1, t.getFromAccountId(), id2);
+        //         if (clientSession != null) {
+        //             transferLogCollection.insertOne(clientSession, log);
+        //         } else {
+        //             transferLogCollection.insertOne(log);
+        //         }
+        //     }
+        //     sw.stop();
             //logger.info((clientSession == null ? "" : ("clientSession: " + clientSession.getServerSession().getIdentifier().getBinary("id").asUuid() + " ")) + "Completed transfer $1x" + t.getToAccountId().size() + " from " + t.getFromAccountId() + " to " + Arrays.toString(t.getToAccountId().toArray()) + ". takes "
             //        + sw.getTotalTimeMillis() + "ms, TPS:" + (t.getToAccountId().size() + 1) / sw.getTotalTimeSeconds());
+        // }
+        // End - Tony update to findAndModify from find and update, find and update requires serial read isolation to lock find and update to avoid any changes in the middle
+        Account _newBalance = null; 
+        if (clientSession != null) {
+            _newBalance =  collection.findOneAndUpdate(clientSession, Filters.eq("_id", t.getFromAccountId()), Updates.inc("balance", -transferAmount));
+        } else {
+            _newBalance = collection.findOneAndUpdate(Filters.eq("_id", t.getFromAccountId()), Updates.inc("balance", -transferAmount));
+        }
+        if (_newBalance.getBalance() < 0) {
+            logger.info("Account " + _newBalance.getId() + " have not enough balance, skip transfer");
+            sw.stop();
+            throw new RuntimeException("Account " + _newBalance.getId() + " have not enough balance, skip transfer");
+        } else {
+
+            TransferLog log = new TransferLog(1, t.getFromAccountId(), t.getToAccountId().get(0));
+            if (clientSession != null) {
+                transferLogCollection.insertOne(clientSession, log);
+            } else {
+                transferLogCollection.insertOne(log);
+            }
+
+            sw.stop();
         }
     }
 
